@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Precisión tranquila — tokens de color (RGB para soportar opacidad en Tailwind) */
+:root {
+  --bg: 248 250 252;          /* #F8FAFC */
+  --surface: 255 255 255;     /* #FFFFFF */
+  --subtle: 242 244 247;      /* fondos secundarios */
+  --muted: 249 250 251;
+  --ink: 16 24 40;            /* #101828 */
+  --ink-2: 102 112 133;       /* #667085 */
+  --ink-3: 152 162 179;
+  --line: 228 231 236;        /* #E4E7EC */
+  --line-strong: 208 213 221;
+  --primary: 79 70 229;       /* #4F46E5 */
+  --primary-hover: 67 56 202; /* #4338CA */
+  --primary-soft: 238 242 255;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 12 17 29;
+  --surface: 20 26 40;
+  --subtle: 29 36 52;
+  --muted: 24 31 46;
+  --ink: 240 242 246;
+  --ink-2: 152 162 179;
+  --ink-3: 102 112 133;
+  --line: 40 48 66;
+  --line-strong: 56 66 88;
+  --primary: 110 104 245;
+  --primary-hover: 129 124 248;
+  --primary-soft: 36 36 74;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body {
+    @apply h-full bg-bg text-ink antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  h1, h2, h3 {
+    @apply font-display tracking-tight;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/40 ring-offset-1 ring-offset-surface;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface shadow-xs;
+  }
+  .input {
+    @apply h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink placeholder:text-ink-3
+      transition-colors hover:border-line-strong focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15
+      disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-ink;
+  }
+  .chip {
+    @apply inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs font-medium;
+  }
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line-strong)) transparent;
+  }
+}
+
+/* Editor de texto enriquecido */
+.prose-orbita {
+  @apply text-sm leading-6 text-ink;
+}
+.prose-orbita p { @apply my-1.5; }
+.prose-orbita h1 { @apply mb-2 mt-4 text-lg font-semibold; }
+.prose-orbita h2 { @apply mb-2 mt-3 text-base font-semibold; }
+.prose-orbita h3 { @apply mb-1 mt-3 text-sm font-semibold; }
+.prose-orbita ul { @apply my-1.5 list-disc pl-5; }
+.prose-orbita ol { @apply my-1.5 list-decimal pl-5; }
+.prose-orbita a { @apply text-primary underline underline-offset-2; }
+.prose-orbita code { @apply rounded bg-subtle px-1 py-0.5 font-mono text-[12.5px]; }
+.prose-orbita pre { @apply my-2 overflow-x-auto rounded-lg bg-subtle p-3 font-mono text-[12.5px]; }
+.prose-orbita blockquote { @apply my-2 border-l-2 border-line-strong pl-3 text-ink-2; }
+.prose-orbita hr { @apply my-3 border-line; }
+.ProseMirror { @apply min-h-[96px] outline-none; }
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-ink-3;
+}
