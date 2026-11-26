@@ -56,8 +56,16 @@ def emit_user(db: Session, user_id: int, type_: str, **ids) -> None:
     db.info.setdefault("rt_events", []).append(("user", user_id, type_, ids))
 
 
+def emit_mail_wakeup(db: Session) -> None:
+    db.info["mail_wakeup"] = True
+
+
 @event.listens_for(Session, "after_commit")
 def _flush_events(session: Session) -> None:
+    if session.info.pop("mail_wakeup", False):
+        from app.services.mailer import wake_worker
+
+        wake_worker()
     events = session.info.pop("rt_events", [])
     for scope, target, type_, ids in events:
         if scope == "org":
@@ -69,3 +77,4 @@ def _flush_events(session: Session) -> None:
 @event.listens_for(Session, "after_rollback")
 def _drop_events(session: Session) -> None:
     session.info.pop("rt_events", None)
+    session.info.pop("mail_wakeup", None)

@@ -4,7 +4,7 @@
 
 * **Frontend:** Next.js 15, TypeScript, Tailwind CSS, Radix UI, TanStack Query, dnd-kit y Tiptap.
 * **Backend:** FastAPI, SQLAlchemy 2, Pydantic 2 y Alembic.
-* **Infraestructura:** MySQL 8.4, Redis (pub/sub y colas), MinIO (S3), WebSockets y un worker.
+* **Infraestructura:** MySQL 8.4, Redis (pub/sub y colas), SeaweedFS (S3), WebSockets y un worker.
 
 Arquitectura, modelo de datos, API y decisiones: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Despliegue: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
@@ -34,7 +34,7 @@ Necesitas Docker Desktop (o Docker Engine con Compose v2) y unos 6 GB libres en 
 cp .env.example .env
 ```
 
-**2. Imagen de MinIO.** La imagen oficial `minio/minio` ya no se publica en Docker Hub. `.env.example` trae por defecto el fork comunitario `pgsty/minio`, fijado por digest. Si prefieres otra opción, cambia `MINIO_IMAGE`; las alternativas están en [docs/DEPLOYMENT.md §4](docs/DEPLOYMENT.md).
+**2. Almacenamiento.** Compose inicia SeaweedFS en nodo único y crea el bucket configurado en `S3_BUCKET`.
 
 **3. Levanta el entorno**
 
@@ -60,7 +60,6 @@ El comando pide la contraseña de forma interactiva. Si el correo ya existe, pro
 | API y OpenAPI (Swagger) | http://127.0.0.1:8000/api/docs |
 | phpMyAdmin (solo desarrollo) | http://127.0.0.1:8080 · usuario `orbita`, contraseña la de `MYSQL_PASSWORD` |
 | Mailpit (correos de desarrollo) | http://127.0.0.1:8025 |
-| Consola de MinIO | http://127.0.0.1:9001 |
 
 Todos los puertos se ligan a `127.0.0.1`, así que nada queda expuesto a la red local.
 
@@ -101,7 +100,7 @@ cd frontend && npm install && npx tsc --noEmit
 ## Protección de datos
 
 * **Migraciones:** solo incrementales (`alembic upgrade head`). La aplicación no contiene `drop_all`, reinicios destructivos ni seeds que borren datos.
-* **Volúmenes:** `mysql_data`, `minio_data` y `redis_data` son persistentes. No uses `docker compose down -v` salvo que quieras borrar todo.
+* **Volúmenes:** `mysql_data`, `seaweedfs_data` y `redis_data` son persistentes. No uses `docker compose down -v` salvo que quieras borrar todo.
 * **Borrado lógico:** proyectos, tareas, comentarios y adjuntos se marcan como borrados y conservan su historial.
 
 ## Estructura

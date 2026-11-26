@@ -1,3 +1,4 @@
+from app.models.mail import OutgoingMail
 from app.models.identity import EmailToken, User, UserSession
 from app.models.org import ORG_ROLES, Invitation, Membership, Organization, OrgHoliday, Team, TeamMember, UserAbsence
 from app.models.project import (
@@ -38,6 +39,7 @@ from app.models.achievements import (
 )
 
 __all__ = [
+    "OutgoingMail",
     "User", "UserSession", "EmailToken",
     "Organization", "Membership", "Invitation", "Team", "TeamMember", "ORG_ROLES",
     "Project", "ProjectMember", "WorkflowStatus", "Label", "Milestone", "Sprint", "Goal",

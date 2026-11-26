@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 import os
 import uuid
 from datetime import timedelta
@@ -415,10 +417,10 @@ def _get_att(db: Session, ctx: OrgCtx, task: Task, att_id: int) -> Attachment:
 def download_attachment(task_id: int, att_id: int, ctx: OrgCtx = Depends(get_org_ctx), db: Session = Depends(get_db)):
     task, _, _ = load_task(db, ctx, task_id, include_deleted=True)
     a = _get_att(db, ctx, task, att_id)
-    safe = a.filename.replace('"', "")
+    safe = quote(a.filename, safe="")
     inline = a.content_type.startswith("image/") and a.content_type != "image/svg+xml" or a.content_type == "application/pdf"
     headers = {
-        "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="{safe}"',
+        "Content-Disposition": f'{"inline" if inline else "attachment"}; filename*=UTF-8\'\'{safe}',
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox",
         "Content-Length": str(a.size),

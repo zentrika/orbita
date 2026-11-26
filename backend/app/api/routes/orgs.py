@@ -195,10 +195,11 @@ def create_invitation(data: InvitationCreate, ctx: OrgCtx = Depends(require_org_
     org = db.get(Organization, ctx.org_id)
     url = link(f"/invite/{token}")
     queue_email(
-        email,
+        db, email,
         f"{ctx.user.full_name} te invitó a {org.name} en Órbita",
         f"Hola,\n\n{ctx.user.full_name} te invitó a unirte a {org.name} en Órbita.\n\nAcepta la invitación:\n{url}\n\n"
         "La invitación caduca en 7 días.",
+        expires_at=inv.expires_at,
     )
     log_activity(db, org_id=ctx.org_id, actor_id=ctx.user.id, action="invited", entity_type="invitation", changes={"email": email, "role": data.role})
     if existing_user:

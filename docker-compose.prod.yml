@@ -1,109 +1,183 @@
-# Entorno de PRODUCCIÓN.
-#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-#
-# Diferencias con desarrollo:
-#   * Sin phpMyAdmin ni Mailpit.
-#   * MySQL, Redis y MinIO no publican puertos: sólo son accesibles dentro de la red interna.
-#   * Backend y frontend escuchan sólo en 127.0.0.1; un proxy inverso con TLS (Caddy/Nginx) los expone.
-#   * Sin datos de demostración y sin dependencias de desarrollo.
 name: orbita-prod
 
 x-backend-env: &backend-env
   APP_ENV: production
   FRONTEND_URL: ${FRONTEND_URL:?}
   CORS_ORIGINS: ${CORS_ORIGINS:?}
-  SECRET_KEY: ${SECRET_KEY:?Define un SECRET_KEY de al menos 32 caracteres}
+  SECRET_KEY: ${SECRET_KEY:?}
   ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
   REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-30}
   COOKIE_SECURE: "true"
+
   DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}?charset=utf8mb4
+
   REDIS_URL: redis://redis:6379/0
-  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://seaweedfs:8333}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
   S3_SECRET_KEY: ${S3_SECRET_KEY:?}
   S3_BUCKET: ${S3_BUCKET:-orbita-attachments}
   S3_REGION: ${S3_REGION:-us-east-1}
   MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+
   SMTP_HOST: ${SMTP_HOST:?}
   SMTP_PORT: ${SMTP_PORT:-587}
   SMTP_USER: ${SMTP_USER}
   SMTP_PASSWORD: ${SMTP_PASSWORD}
   SMTP_FROM: ${SMTP_FROM:?}
   SMTP_TLS: ${SMTP_TLS:-true}
+
   SEED_DEMO: "false"
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
-  mysql:
-    image: mysql:8.4
-    restart: always
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:?}
-      MYSQL_USER: ${MYSQL_USER:?}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      retries: 30
 
   redis:
     image: redis:7-alpine
-    restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    container_name: orbita-redis
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+
     volumes:
       - redis_data:/data
+
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
-  minio:
-    # Si usas un S3 gestionado (AWS S3, R2, Spaces…), elimina este servicio y define S3_ENDPOINT_URL.
-    image: ${MINIO_IMAGE:?Define MINIO_IMAGE (ver docs/DEPLOYMENT.md)}
-    restart: always
-    command: ["server", "/data"]
+    mem_limit: 512m
+    cpus: 0.25
+
+    networks:
+      - orbita_internal
+
+    logging: *default-logging
+
+  seaweedfs:
+    restart: unless-stopped
+    image: chrislusf/seaweedfs:4.55@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
+    command:
+      - mini
+      - -dir=/data
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.iam=false
+      - -s3.concurrentUploadLimitMB=64
+      - -s3.readerCacheSizeMB=64
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Configura S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Configura S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-orbita-attachments}
+      GOMEMLIMIT: 512MiB
     volumes:
-      - minio_data:/data
+      - seaweedfs_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --max-time 4
+          --aws-sigv4 'aws:amz:us-east-1:s3'
+          --user "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY"
+          --head "http://127.0.0.1:8333/$$S3_BUCKET" >/dev/null
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 0.5
+    networks: [orbita_internal]
+    logging: *default-logging
 
   backend:
-    build: { context: ./backend }
-    restart: always
+    image: zentrika/orbita-backend:local
+    build:
+      context: ./backend
+
+    container_name: orbita-backend
+    restart: unless-stopped
+
     environment: *backend-env
+
     depends_on:
-      mysql: { condition: service_healthy }
-      redis: { condition: service_healthy }
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+
     ports:
       - "127.0.0.1:8000:8000"
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
+
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "2"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+
+    mem_limit: 1g
+    cpus: 1.0
+
+    networks:
+      - orbita_internal
+      - zentrika_network
+
+    logging: *default-logging
 
   worker:
-    build: { context: ./backend }
-    restart: always
+    image: zentrika/orbita-backend:local
+    container_name: orbita-worker
+    restart: unless-stopped
+
     environment: *backend-env
+
     entrypoint: []
-    command: ["python", "-m", "app.worker"]
+
+    command:
+      - python
+      - -m
+      - app.worker
+
     depends_on:
       - backend
 
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:?Ej. wss://app.tudominio.com/api/v1/ws}
-    restart: always
-    environment:
-      BACKEND_INTERNAL_URL: http://backend:8000
-    depends_on:
-      - backend
-    ports:
-      - "127.0.0.1:3000:3000"
+    mem_limit: 512m
+    cpus: 0.25
+
+    networks:
+      - orbita_internal
+      - zentrika_network
+
+    logging: *default-logging
 
 volumes:
-  mysql_data:
   redis_data:
-  minio_data:
+  seaweedfs_data:
+
+networks:
+  orbita_internal:
+    driver: bridge
+
+  zentrika_network:
+    external: true

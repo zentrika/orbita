@@ -2,6 +2,10 @@
 # Arranque del backend: SOLO migraciones incrementales pendientes. Nunca borra ni recrea tablas.
 set -e
 
+if [ "$APP_ENV" = "production" ]; then
+  exec "$@"
+fi
+
 echo "Esperando a MySQL..."
 python - <<'PY'
 import time, sys

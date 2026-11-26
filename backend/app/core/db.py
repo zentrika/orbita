@@ -16,9 +16,10 @@ class Base(DeclarativeBase):
     type_annotation_map = {datetime: DateTime()}
 
 
-_engine_kwargs: dict = {"pool_pre_ping": True, "future": True}
+_engine_kwargs: dict = {"pool_pre_ping": True, "future": True, "hide_parameters": True}
 if settings.DATABASE_URL.startswith("mysql"):
-    _engine_kwargs.update(pool_size=10, max_overflow=20, pool_recycle=1800)
+    _engine_kwargs.update(pool_size=5, max_overflow=5, pool_recycle=1800,
+                          connect_args={"connect_timeout": 5, "read_timeout": 20, "write_timeout": 20})
 
 engine = create_engine(settings.DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

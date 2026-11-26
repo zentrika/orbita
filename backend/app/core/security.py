@@ -45,10 +45,10 @@ def create_access_token(user_id: int, session_id: int) -> str:
 
 def decode_access_token(token: str) -> dict | None:
     try:
-        data = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        data = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM], options={"require": ["exp", "iat", "sub", "sid"]})
     except jwt.PyJWTError:
         return None
-    if data.get("typ") != "access":
+    if data.get("typ") != "access" or type(data["sid"]) is not int:
         return None
     return data
 

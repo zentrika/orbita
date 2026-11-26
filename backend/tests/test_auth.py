@@ -8,7 +8,7 @@ from app.api.routes import auth as auth_routes
 @pytest.fixture
 def outbox(monkeypatch):
     sent = []
-    monkeypatch.setattr(auth_routes, "queue_email", lambda to, subject, body: sent.append((to, subject, body)))
+    monkeypatch.setattr(auth_routes, "queue_email", lambda db, to, subject, body, **kwargs: sent.append((to, subject, body)))
     return sent
 
 

@@ -25,7 +25,6 @@ Valores obligatorios en producción:
 | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | credenciales largas y únicas |
 | `SMTP_*` | credenciales de tu proveedor |
 | `NEXT_PUBLIC_WS_URL` | `wss://app.tudominio.com/api/v1/ws` |
-| `MINIO_IMAGE` | ver §4 |
 
 Los secretos sólo se leen de variables de entorno; nunca se suben al repositorio (`.env*` está en `.gitignore`).
 
@@ -39,20 +38,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.production exec backen
 
 `create-admin` pide la contraseña de forma interactiva (no queda en el historial del shell).
 
-## 4. Almacenamiento S3 / MinIO
+## 4. Almacenamiento S3
 
-En 2025 MinIO dejó de publicar imágenes comunitarias en Docker Hub, así que `minio/minio` ya no se puede descargar.
-Opciones, de más a menos recomendada para producción:
-
-1. **S3 gestionado** (AWS S3, Cloudflare R2, DigitalOcean Spaces, Backblaze B2): elimina el servicio `minio`,
-   define `S3_ENDPOINT_URL` (déjalo vacío para AWS), `S3_REGION`, `S3_BUCKET` y las credenciales.
-2. **Compilar MinIO** desde el código fuente oficial (`github.com/minio/minio`) y publicar la imagen en tu registro.
-3. **Imagen de terceros** compatible, fijada por digest. Por ejemplo, el fork comunitario
-   `pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372` o `cgr.dev/chainguard/minio`.
-   Revísala antes de usarla.
-
-El bucket se crea automáticamente en la primera subida y nunca es público: las descargas pasan por el backend,
-que valida los permisos.
+SeaweedFS se ejecuta en modo de nodo único con autenticación S3 y volumen persistente `seaweedfs_data`. Para migrar un almacén existente, consulta la guía del VPS. [Despliegue en ZENTRIKA](despliegue-vps.md).
 
 ## 5. Proxy inverso con TLS (Caddy)
 
@@ -94,7 +82,7 @@ docker compose -f docker-compose.prod.yml exec -T mysql \
 # Adjuntos: replica el bucket con `mc mirror` o la herramienta de tu proveedor S3.
 ```
 
-Los volúmenes `mysql_data` y `minio_data` son persistentes. **Nunca** uses `docker compose down -v` en producción:
+Los volúmenes `mysql_data` y `seaweedfs_data` son persistentes. **Nunca** uses `docker compose down -v` en producción:
 `-v` elimina los volúmenes y sus datos.
 
 ## 8. phpMyAdmin

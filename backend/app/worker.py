@@ -1,10 +1,12 @@
 """Worker de tareas en segundo plano.
 
-* Consume la cola de correos (Redis list `orbita:emails`) y los envía por SMTP.
+* Procesa la bandeja SMTP; Redis despierta al worker tras confirmar la transacción.
 * Cada minuto genera recordatorios para tareas que vencen en las próximas N horas.
 """
 
+import hashlib
 import json
+from pathlib import Path
 import logging
 import signal
 import time
@@ -12,11 +14,12 @@ from datetime import date, timedelta
 
 import redis
 from sqlalchemy import select
+from cryptography.fernet import Fernet
 
 from app.core.config import settings
 from app.core.db import SessionLocal, utcnow
-from app.models import Project, Task, TaskWatcher, WorkflowStatus
-from app.services.mailer import QUEUE, send_email
+from app.models import OutgoingMail, Project, Task, TaskWatcher, WorkflowStatus
+from app.services.mailer import QUEUE, WAKE_QUEUE, deliver_next
 from app.services.notifications import notify
 
 log = logging.getLogger("orbita.worker")
@@ -65,34 +68,53 @@ def due_reminders() -> int:
     return sent
 
 
+def import_legacy_email(client: redis.Redis) -> None:
+    """Migra los mensajes de la versión anterior conservando el original hasta el commit."""
+    if not settings.SMTP_HOST:
+        return
+    item = client.lindex(QUEUE, 0)
+    if item is None:
+        return
+    try:
+        job = json.loads(item)
+        if not isinstance(job, dict) or not all(isinstance(job.get(k), str) for k in ("to", "subject", "body")):
+            raise ValueError
+    except ValueError:
+        client.lmove(QUEUE, f"{QUEUE}:invalid", "LEFT", "RIGHT")
+        log.error("Trabajo de correo antiguo inválido en Redis")
+        return
+    job["message_id"] = f"<legacy-{hashlib.sha256(item.encode()).hexdigest()}@zentrika.tech>"
+    payload = Fernet(settings.MAIL_ENCRYPTION_KEY).encrypt(json.dumps(job).encode())
+    with SessionLocal.begin() as db:
+        db.add(OutgoingMail(payload=payload, next_attempt_at=utcnow(), expires_at=utcnow() + timedelta(hours=1)))
+    client.lpop(QUEUE)
+
+
 def main() -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
-    r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=3, socket_timeout=8)
+    heartbeat_file = Path("/tmp/orbita-worker-heartbeat")
     log.info("Worker iniciado")
     last_reminder = 0.0
     while _running:
         try:
-            if time.time() - last_reminder > 60:
-                last_reminder = time.time()
+            if time.monotonic() - last_reminder > 60 or last_reminder == 0:
+                last_reminder = time.monotonic()
                 due_reminders()
-            item = r.blpop([QUEUE], timeout=5)
-            if item:
-                job = json.loads(item[1])
-                try:
-                    send_email(job)
-                    log.info("Correo enviado a %s", job["to"])
-                except Exception:  # noqa: BLE001
-                    log.exception("Fallo al enviar correo; se reintentará")
-                    job["attempts"] = job.get("attempts", 0) + 1
-                    if job["attempts"] < 5:
-                        r.rpush(QUEUE, json.dumps(job))
-                    time.sleep(2)
-        except redis.RedisError:
-            log.warning("Redis no disponible; reintento en 5 s")
+            with SessionLocal() as db:
+                delivered = deliver_next(db) if settings.SMTP_HOST else False
+            heartbeat_file.touch()
+        except Exception as exc:
+            log.error("Error en el worker: %s", type(exc).__name__)
             time.sleep(5)
-        except Exception:  # noqa: BLE001
-            log.exception("Error en el worker")
+            continue
+        try:
+            import_legacy_email(r)
+            if not delivered:
+                r.blpop([WAKE_QUEUE], timeout=5)
+        except redis.RedisError:
+            log.warning("Redis no disponible; la bandeja se consultará de nuevo en 5 s")
             time.sleep(5)
     log.info("Worker detenido")
 
