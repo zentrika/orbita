@@ -1,0 +1,149 @@
+name: orbita-vps
+
+x-runtime: &runtime
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-app: &app
+  <<: *runtime
+  image: zentrika/orbita-backend:${ORBITA_IMAGE_TAG:-vps-local}
+  read_only: true
+  tmpfs:
+    - /tmp:size=160m,mode=1777
+  environment:
+    APP_ENV: production
+    FRONTEND_URL: https://orbita.zentrika.tech
+    CORS_ORIGINS: https://orbita.zentrika.tech
+    COOKIE_SECURE: "true"
+    SECRET_KEY: ${SECRET_KEY:?Completa .env.production}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Configura la contraseña existente de orbita_user}
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT_URL: http://seaweedfs:8333
+    S3_BUCKET: ${S3_BUCKET:-orbita-attachments}
+    S3_ACCESS_KEY: ${S3_ACCESS_KEY:?Completa .env.production}
+    S3_SECRET_KEY: ${S3_SECRET_KEY:?Completa .env.production}
+    MAX_UPLOAD_MB: "25"
+    MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:?Completa .env.production}
+    SMTP_HOST: smtp.hostinger.com
+    SMTP_PORT: "587"
+    SMTP_USER: contacto@zentrika.tech
+    SMTP_PASSWORD: ${SMTP_PASSWORD:?Configura la contraseña SMTP}
+    SMTP_FROM: "Órbita | ZENTRIKA <notificaciones@zentrika.tech>"
+    SMTP_TLS: "true"
+  networks:
+    orbita_private: {}
+    zentrika_network:
+      gw_priority: 1
+
+services:
+  backend:
+    <<: *app
+    build:
+      context: ./backend
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=2
+      - --proxy-headers
+      - --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:?Indica únicamente el gateway IPv4 verificado}
+      - --ws-max-size=16384
+      - --no-access-log
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).close()"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 1280m
+    cpus: 1.0
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib,time; assert time.time()-pathlib.Path('/tmp/orbita-worker-heartbeat').stat().st_mtime < 90"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    mem_limit: 512m
+    cpus: 0.25
+
+  redis:
+    <<: *runtime
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "192mb", "--maxmemory-policy", "noeviction"]
+    networks: [orbita_private]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    mem_limit: 512m
+    cpus: 0.25
+
+  seaweedfs:
+    <<: *runtime
+    networks: [orbita_private]
+    image: chrislusf/seaweedfs:4.55@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
+    command:
+      - mini
+      - -dir=/data
+      - -webdav=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -s3.iam=false
+      - -s3.concurrentUploadLimitMB=64
+      - -s3.readerCacheSizeMB=64
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Configura S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Configura S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-orbita-attachments}
+      GOMEMLIMIT: 512MiB
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --max-time 4
+          --aws-sigv4 'aws:amz:us-east-1:s3'
+          --user "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY"
+          --head "http://127.0.0.1:8333/$$S3_BUCKET" >/dev/null
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 0.5
+
+volumes:
+  redis_data:
+  seaweedfs_data:
+
+networks:
+  orbita_private:
+    internal: true
+  zentrika_network:
+    external: true

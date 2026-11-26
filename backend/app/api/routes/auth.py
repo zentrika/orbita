@@ -46,6 +46,11 @@ def _too_many(request: Request, name: str, limit: int = 10, window: int = 300) -
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Demasiados intentos. Inténtalo más tarde.")
 
 
+def _require_browser_origin(request: Request) -> None:
+    if settings.is_production and request.headers.get("origin") not in settings.cors_origins:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Origen no autorizado")
+
+
 def _set_refresh_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         REFRESH_COOKIE,
@@ -90,7 +95,7 @@ def _issue_email_token(db: Session, user: User, purpose: str, hours: int) -> str
 
 
 def _consume_email_token(db: Session, token: str, purpose: str) -> EmailToken:
-    et = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(token), EmailToken.purpose == purpose))
+    et = db.scalar(select(EmailToken).where(EmailToken.token_hash == hash_token(token), EmailToken.purpose == purpose).with_for_update())
     if not et or et.used_at is not None or et.expires_at < utcnow():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "El enlace no es válido o ha caducado")
     et.used_at = utcnow()
@@ -100,9 +105,10 @@ def _consume_email_token(db: Session, token: str, purpose: str) -> EmailToken:
 def send_verification(db: Session, user: User) -> None:
     token = _issue_email_token(db, user, "verify", hours=48)
     queue_email(
-        user.email,
+        db, user.email,
         "Confirma tu correo en Órbita",
         f"Hola {user.full_name},\n\nConfirma tu dirección de correo:\n{link('/verify-email?token=' + token)}\n",
+        expires_at=utcnow() + timedelta(hours=48),
     )
 
 
@@ -183,12 +189,12 @@ def login(data: LoginIn, request: Request, response: Response, db: Session = Dep
 
 @router.post("/refresh", response_model=TokenOut)
 def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
+    _require_browser_origin(request)
     token = request.cookies.get(REFRESH_COOKIE)
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sin sesión")
-    sess = db.scalar(select(UserSession).where(UserSession.refresh_token_hash == hash_token(token)))
+    sess = db.scalar(select(UserSession).where(UserSession.refresh_token_hash == hash_token(token)).with_for_update())
     if not sess or sess.revoked_at or sess.expires_at < utcnow():
-        response.delete_cookie(REFRESH_COOKIE, path=COOKIE_PATH)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sesión expirada")
     user = db.get(User, sess.user_id)
     if not user or not user.is_active:
@@ -204,13 +210,14 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
 
 @router.post("/logout", response_model=Message)
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    _require_browser_origin(request)
     token = request.cookies.get(REFRESH_COOKIE)
     if token:
-        sess = db.scalar(select(UserSession).where(UserSession.refresh_token_hash == hash_token(token)))
+        sess = db.scalar(select(UserSession).where(UserSession.refresh_token_hash == hash_token(token)).with_for_update())
         if sess and not sess.revoked_at:
             sess.revoked_at = utcnow()
             db.commit()
-    response.delete_cookie(REFRESH_COOKIE, path=COOKIE_PATH)
+    response.delete_cookie(REFRESH_COOKIE, path=COOKIE_PATH, secure=settings.COOKIE_SECURE, httponly=True, samesite="strict")
     return Message(detail="Sesión cerrada")
 
 
@@ -240,10 +247,11 @@ def forgot_password(data: EmailIn, request: Request, db: Session = Depends(get_d
     if user and user.is_active:
         token = _issue_email_token(db, user, "reset", hours=1)
         queue_email(
-            user.email,
+            db, user.email,
             "Restablece tu contraseña de Órbita",
             f"Hola {user.full_name},\n\nPara crear una nueva contraseña abre:\n"
             f"{link('/reset-password?token=' + token)}\n\nEl enlace caduca en 1 hora.",
+            expires_at=utcnow() + timedelta(hours=1),
         )
         db.commit()
     # Respuesta idéntica exista o no la cuenta (evita enumeración de usuarios).

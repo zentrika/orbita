@@ -1,7 +1,8 @@
-"""Almacenamiento compatible con S3 (MinIO en local)."""
+"""Almacenamiento compatible con S3."""
 
 import logging
 from collections.abc import Iterator
+from contextlib import closing
 from typing import BinaryIO, Protocol
 
 from app.core.config import settings
@@ -26,7 +27,10 @@ class S3Storage:
             aws_access_key_id=settings.S3_ACCESS_KEY,
             aws_secret_access_key=settings.S3_SECRET_KEY,
             region_name=settings.S3_REGION,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+            config=Config(
+                signature_version="s3v4", s3={"addressing_style": "path"},
+                connect_timeout=3, read_timeout=15, retries={"total_max_attempts": 3, "mode": "standard"},
+            ),
         )
         self._bucket_ready = False
 
@@ -37,9 +41,14 @@ class S3Storage:
 
         try:
             self.client.head_bucket(Bucket=self.bucket)
-        except ClientError:
-            log.info("Creando bucket %s", self.bucket)
-            self.client.create_bucket(Bucket=self.bucket)
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] not in {"404", "NotFound", "NoSuchBucket"}:
+                raise
+            try:
+                self.client.create_bucket(Bucket=self.bucket)
+            except ClientError as create_error:
+                if create_error.response["Error"]["Code"] != "BucketAlreadyOwnedByYou":
+                    raise
         self._bucket_ready = True
 
     def put(self, key: str, fileobj: BinaryIO, content_type: str) -> None:
@@ -48,7 +57,9 @@ class S3Storage:
 
     def stream(self, key: str) -> Iterator[bytes]:
         obj = self.client.get_object(Bucket=self.bucket, Key=key)
-        yield from obj["Body"].iter_chunks(64 * 1024)
+        with closing(obj["Body"]) as body:
+            while chunk := body.read(64 * 1024):
+                yield chunk
 
 
 class MemoryStorage:

@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
+from app.core.db import get_db, utcnow
 from app.core.security import decode_access_token
 from app.models import Membership, User, UserSession
 
@@ -17,7 +17,7 @@ def authenticate_token(db: Session, token: str) -> tuple[User, UserSession] | No
     if not data:
         return None
     sess = db.get(UserSession, data.get("sid"))
-    if not sess or sess.revoked_at is not None or str(sess.user_id) != data.get("sub"):
+    if not sess or sess.revoked_at is not None or sess.expires_at <= utcnow() or str(sess.user_id) != data.get("sub"):
         return None
     user = db.get(User, sess.user_id)
     if not user or not user.is_active:
@@ -92,7 +92,4 @@ def require_org_admin(ctx: OrgCtx = Depends(get_org_ctx)) -> OrgCtx:
 
 
 def client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()[:64]
     return (request.client.host if request.client else "")[:64]

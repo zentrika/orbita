@@ -15,7 +15,7 @@ def get_redis() -> redis.Redis | None:
     if settings.APP_ENV == "test" or not settings.REDIS_URL:
         return None
     if _client is None:
-        _client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=3)
+        _client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
     return _client
 
 
@@ -23,13 +23,12 @@ def rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     """Ventana fija. Devuelve True si la petición está permitida."""
     r = get_redis()
     if r is None:
-        return True
+        return not settings.is_production
     bucket = f"rl:{key}:{int(time.time() // window_seconds)}"
     try:
-        n = r.incr(bucket)
-        if n == 1:
-            r.expire(bucket, window_seconds)
+        with r.pipeline() as pipe:
+            n, _ = pipe.incr(bucket).expire(bucket, window_seconds).execute()
         return n <= limit
     except redis.RedisError:
         log.warning("Redis no disponible para rate limit")
-        return True
+        return not settings.is_production

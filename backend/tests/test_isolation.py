@@ -70,3 +70,22 @@ def test_member_of_both_sees_each_separately(make_user, invite):
 def test_platform_admin_endpoints_require_flag(make_user):
     a = make_user("a@a.com", "Empresa A")
     assert a.get("/api/v1/admin/organizations").status_code == 403
+
+
+def test_attachment_download_and_delete_permissions(make_user, client):
+    owner = make_user("owner@example.com", "Empresa A")
+    outsider = make_user("outsider@example.com", "Empresa B")
+    _, task = _setup(owner)
+    attachments = f"/api/v1/orgs/{owner.org_id}/tasks/{task['id']}/attachments"
+    payload = b"adjunto privado"
+    uploaded = owner.post(attachments, files={"file": ("prueba.txt", payload, "text/plain")})
+    assert uploaded.status_code == 201
+    attachment = f"{attachments}/{uploaded.json()['id']}"
+
+    assert client.get(f"{attachment}/download").status_code == 401
+    assert outsider.get(f"{attachment}/download").status_code == 404
+    assert outsider.delete(attachment).status_code == 404
+    assert owner.get(f"{attachment}/download").content == payload
+    assert owner.delete(attachment).status_code == 200
+    assert owner.get(f"{attachment}/download").status_code == 404
+    assert owner.get(attachments).json() == []

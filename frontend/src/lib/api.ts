@@ -12,6 +12,9 @@ export class ApiError extends Error {
   }
 }
 
+const apiOrigin = process.env.NEXT_PUBLIC_API_ORIGIN?.replace(/\/$/, "") ?? "";
+const credentials = apiOrigin ? "include" : "same-origin";
+
 let accessToken: string | null = null;
 let refreshing: Promise<string | null> | null = null;
 let onUnauthorized: (() => void) | null = null;
@@ -28,7 +31,7 @@ export function setUnauthorizedHandler(fn: () => void) {
 
 export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshing) {
-    refreshing = fetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" })
+    refreshing = fetch(`${apiOrigin}/api/v1/auth/refresh`, { method: "POST", credentials })
       .then(async (r) => {
         if (!r.ok) return null;
         const data = await r.json();
@@ -67,7 +70,7 @@ export async function api<T = unknown>(path: string, opts: Opts = {}, retry = tr
     body = JSON.stringify(opts.body);
   }
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  const r = await fetch(`/api/v1${path}`, { ...opts, headers, body, credentials: "same-origin" });
+  const r = await fetch(`${apiOrigin}/api/v1${path}`, { ...opts, headers, body, credentials });
   if (r.status === 401 && retry && !path.startsWith("/auth/login")) {
     const t = await refreshAccessToken();
     if (t) return api<T>(path, opts, false);

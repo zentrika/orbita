@@ -16,7 +16,7 @@ Este documento resume el alcance, la arquitectura, el modelo de datos, la API y 
                                         └──┬─────────┬─────┘     └─────────┘
                                  pub/sub   │         │ S3 API
                                 ┌──────────▼┐     ┌──▼─────┐
-                                │   Redis   │     │ MinIO  │
+                                │   Redis   │     │SeaweedFS│
                                 └──────▲────┘     └────────┘
                                        │ cola de correos / eventos
                                 ┌──────┴──────┐
@@ -33,7 +33,7 @@ Este documento resume el alcance, la arquitectura, el modelo de datos, la API y 
   HTTP son síncronas (pool de hilos); el WebSocket es asíncrono y escucha Redis pub/sub.
 * **Worker** (`app/worker.py`): proceso independiente que consume la cola de correos en Redis y genera
   recordatorios de tareas próximas a vencer.
-* **Almacenamiento**: adjuntos en un bucket S3 (MinIO en local). Las descargas pasan por el backend, que
+* **Almacenamiento**: adjuntos en un bucket S3 (SeaweedFS en local). Las descargas pasan por el backend, que
   valida permisos antes de transmitir el archivo; el bucket nunca es público.
 
 ## 2. Multiempresa y aislamiento
@@ -163,7 +163,7 @@ frontend/
 Autenticación completa (registro, login, refresco con rotación, sesiones, verificación, recuperación,
 invitaciones), multiempresa con aislamiento, roles de organización y proyecto, equipos, proyectos con
 estados/etiquetas/hitos/sprints/metas, tareas con todos los campos pedidos, subtareas, checklist,
-relaciones, registro de tiempo, observadores, comentarios con menciones, adjuntos en MinIO, auditoría,
+relaciones, registro de tiempo, observadores, comentarios con menciones, adjuntos en SeaweedFS, auditoría,
 notificaciones en tiempo real, recordatorios, Kanban, lista, calendario, cronograma arrastrable,
 panel de métricas, modo oscuro, diseño responsive, pruebas, Docker Compose.
 
@@ -187,13 +187,12 @@ y marca propia, página de estado, términos y DPA.
    aceptar una invitación exige que el correo de la cuenta coincida con el invitado.
 3. **Invitado/cliente** puede ver, comentar y adjuntar en proyectos donde se le añadió; no crea tareas.
 4. **Descripción rica** se guarda como HTML saneado en el servidor (lista blanca de etiquetas).
-5. **Descargas a través del backend** en lugar de URLs prefirmadas, para no exponer MinIO y validar permisos en cada descarga.
+5. **Descargas a través del backend** en lugar de URLs prefirmadas, para no exponer SeaweedFS y validar permisos en cada descarga.
 6. **Borrado lógico** en proyectos, tareas, comentarios y adjuntos (`deleted_at`). No existe borrado físico desde la API.
 7. **Migraciones**: el contenedor del backend ejecuta sólo `alembic upgrade head` al arrancar. Nunca `drop_all`.
    Los datos de demostración son idempotentes (buscar-o-crear) y sólo se cargan con `APP_ENV=development` y `SEED_DEMO=true`.
 8. **Correo**: el worker envía por SMTP. En desarrollo se usa Mailpit (`http://localhost:8025`) y los enlaces también se imprimen en el log del backend.
-9. **Imagen de MinIO configurable** (`MINIO_IMAGE`): MinIO dejó de publicar imágenes comunitarias en Docker Hub en 2025.
-   El código usa la API S3 estándar (boto3), así que funciona igual con MinIO, AWS S3, R2 u otros compatibles.
+9. **Almacenamiento S3** mediante boto3. Compose ejecuta SeaweedFS en modo de nodo único.
 10. **Estados como texto validado** (`String` + `Literal` en Pydantic) en lugar de `ENUM` de MySQL: añadir un valor nuevo
     no requiere una migración que altere la tabla.
 
